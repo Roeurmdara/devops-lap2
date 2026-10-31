@@ -1,0 +1,40 @@
+---
+# ==============================================================================
+# Global Variables for Kubernetes Cluster & Add-ons (Lab 2)
+# ==============================================================================
+
+# Base Domain and Subdomains
+base_domain: "dara.lifestyle"
+headlamp_domain: "headlamp.{{ base_domain }}"
+argocd_domain: "argocd.{{ base_domain }}"
+react_domain: "react.{{ base_domain }}"
+
+# Let's Encrypt Configuration
+cert_manager_email: "admin@dara.lifestyle"
+acme_server: "https://acme-v02.api.letsencrypt.org/directory"
+cluster_issuer_name: "letsencrypt-prod"
+
+# ArgoCD Configuration
+argocd_admin_password: "{{ lookup('env', 'ARGOCD_ADMIN_PASSWORD') }}"
+argocd_namespace: "argocd"
+argocd_version: "v2.11.0"
+
+# Headlamp Configuration
+headlamp_namespace: "headlamp"
+headlamp_service_account: "headlamp-admin"
+
+# React.js App & GitOps Configuration
+react_namespace: "production"
+react_image: "nginx:alpine"
+gitops_repo_url: "https://github.com/keoKAY/devoops12-shortcourse-weekend.git"
+gitops_repo_target_revision: "HEAD"
+gitops_repo_path: "7.kubernetes/ingress"
+
+# Local Artifacts & Kubeconfig location
+artifacts_dir: "{{ inventory_dir }}/../../artifacts"
+kubeconfig_local_path: "{{ artifacts_dir }}/admin.conf"
+
+# Cloud / System User (Default for AWS Ubuntu EC2 instances)
+ansible_user: "ubuntu"
+target_user: "{{ ansible_user }}"
+bin_dir: /usr/local/bin

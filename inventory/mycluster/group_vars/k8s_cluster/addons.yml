@@ -1,0 +1,22 @@
+---
+# ==============================================================================
+# Kubespray Add-ons Configuration (addons.yml)
+# ==============================================================================
+
+# Enable Helm 3 binary installation on control-plane
+helm_enabled: true
+
+# Enable Kubernetes Metrics Server for monitoring & HPA
+metrics_server_enabled: true
+metrics_server_kubelet_insecure_tls: true
+metrics_server_metric_resolution: 60s
+
+# Ingress controller configuration:
+# Explicitly disable standard Nginx ingress controller (Traefik will handle all ingress)
+ingress_nginx_enabled: false
+
+# Cert Manager managed via custom automation role
+cert_manager_enabled: false
+
+# Dashboard (Headlamp replaces Kubernetes Dashboard)
+dashboard_enabled: false

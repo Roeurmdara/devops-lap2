@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: react-app-ingress
+  namespace: {{ react_namespace | default('production') }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ cluster_issuer_name | default('letsencrypt-prod') }}
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - {{ react_domain | default('react.dara.lifestyle') }}
+      secretName: react-app-tls-cert
+  rules:
+    - host: {{ react_domain | default('react.dara.lifestyle') }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: react-app-svc
+                port:
+                  number: 80

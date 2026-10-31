@@ -1,0 +1,88 @@
+// ==============================================================================
+// Jenkins Declarative Pipeline for React.js CI/CD with Docker & ArgoCD
+// dara.lifestyle
+// ==============================================================================
+
+pipeline {
+    agent any
+
+    environment {
+        REGISTRY = 'ghcr.io'
+        IMAGE_NAME = 'roeurmdara/dara-lifestyle-react'
+        APP_DIR = 'react-app'
+        ARGOCD_SERVER = 'argocd.dara.lifestyle'
+        ARGOCD_APP_NAME = 'react-app-gitops'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Install Dependencies & Lint') {
+            steps {
+                dir("${env.APP_DIR}") {
+                    sh 'npm ci || npm install'
+                    sh 'npm test'
+                }
+            }
+        }
+
+        stage('Build React Production Assets') {
+            steps {
+                dir("${env.APP_DIR}") {
+                    sh 'npm run build'
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                dir("${env.APP_DIR}") {
+                    script {
+                        def commitHash = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                        sh "docker build -t ${env.REGISTRY}/${env.IMAGE_NAME}:${commitHash} -t ${env.REGISTRY}/${env.IMAGE_NAME}:latest ."
+                    }
+                }
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                script {
+                    def commitHash = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    echo "Pushing image ${env.REGISTRY}/${env.IMAGE_NAME}:${commitHash}..."
+                    // withCredentials([usernamePassword(credentialsId: 'docker-registry-creds', usernameVariable: 'USER', passwordVariable: 'PASS')]) {
+                    //     sh "echo $PASS | docker login ${env.REGISTRY} -u $USER --password-stdin"
+                    //     sh "docker push ${env.REGISTRY}/${env.IMAGE_NAME}:${commitHash}"
+                    //     sh "docker push ${env.REGISTRY}/${env.IMAGE_NAME}:latest"
+                    // }
+                }
+            }
+        }
+
+        stage('Update GitOps Manifests & ArgoCD Sync') {
+            steps {
+                script {
+                    def commitHash = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    echo "Updating Kubernetes manifests to use image tag: ${commitHash}"
+                    sh """
+                        sed -i "s|image: .*dara-lifestyle-react:.*|image: ${env.REGISTRY}/${env.IMAGE_NAME}:${commitHash}|g" manifests/react-app/deployment.yaml || true
+                    """
+                    echo "Triggering ArgoCD automated sync for ${env.ARGOCD_APP_NAME}..."
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline succeeded! React.js app updated for dara.lifestyle."
+        }
+        failure {
+            echo "Pipeline failed. Check build logs for errors."
+        }
+    }
+}

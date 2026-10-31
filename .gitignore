@@ -1,0 +1,33 @@
+# Kubespray external repository (cloned by scripts/setup-kubespray.sh)
+kubespray/
+**/kubespray/
+
+# Generated runtime artifacts and credentials
+artifacts/*
+!artifacts/.gitkeep
+inventory/mycluster/inventory.ini
+credentials/
+*.pem
+*.key
+
+# Ansible retry files
+*.retry
+
+# Node / React dependencies & build artifacts
+node_modules/
+dist/
+build/
+.npm/
+
+# Python bytecode and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+env/
+
+# OS and Editor configurations
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~

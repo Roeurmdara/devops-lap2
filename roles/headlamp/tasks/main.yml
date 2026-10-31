@@ -1,0 +1,107 @@
+---
+# ==============================================================================
+# Role Tasks: Deploy Headlamp Kubernetes Dashboard
+# ==============================================================================
+
+- name: Create Headlamp namespace
+  ansible.builtin.command: kubectl create namespace {{ headlamp_namespace | default('headlamp') }}
+  register: create_ns_headlamp
+  failed_when: create_ns_headlamp.rc != 0 and "already exists" not in create_ns_headlamp.stderr
+  changed_when: create_ns_headlamp.rc == 0
+
+- name: Add Headlamp Helm repository
+  ansible.builtin.command: helm repo add headlamp https://kubernetes-sigs.github.io/headlamp/
+  changed_when: false
+
+- name: Update Helm repositories
+  ansible.builtin.command: helm repo update
+  changed_when: false
+
+- name: Deploy Headlamp via Helm
+  ansible.builtin.command: >
+    helm upgrade --install headlamp headlamp/headlamp
+    --namespace {{ headlamp_namespace | default('headlamp') }}
+    --wait
+    --timeout 5m
+  register: helm_headlamp_result
+  changed_when: "'Release \"headlamp\" does not exist' in helm_headlamp_result.stdout or 'STATUS: deployed' in helm_headlamp_result.stdout"
+
+- name: Wait for Headlamp pod to become ready
+  ansible.builtin.command: >
+    kubectl wait --namespace {{ headlamp_namespace | default('headlamp') }}
+    --for=condition=ready pod
+    --selector=app.kubernetes.io/name=headlamp
+    --timeout=120s
+  changed_when: false
+
+- name: Render and apply Headlamp RBAC
+  ansible.builtin.template:
+    src: headlamp-rbac.yaml.j2
+    dest: /tmp/headlamp-rbac.yaml
+    mode: '0644'
+
+- name: Apply Headlamp RBAC
+  ansible.builtin.command: kubectl apply -f /tmp/headlamp-rbac.yaml
+  register: apply_headlamp_rbac
+  changed_when: "'configured' in apply_headlamp_rbac.stdout or 'created' in apply_headlamp_rbac.stdout"
+
+- name: Render and apply Headlamp Ingress
+  ansible.builtin.template:
+    src: headlamp-ingress.yaml.j2
+    dest: /tmp/headlamp-ingress.yaml
+    mode: '0644'
+
+- name: Apply Headlamp Ingress
+  ansible.builtin.command: kubectl apply -f /tmp/headlamp-ingress.yaml
+  register: apply_headlamp_ingress
+  changed_when: "'configured' in apply_headlamp_ingress.stdout or 'created' in apply_headlamp_ingress.stdout"
+
+- name: Wait for Headlamp token secret to be populated
+  ansible.builtin.command: >
+    kubectl get secret {{ headlamp_service_account | default('headlamp-admin') }}-token
+    -n {{ headlamp_namespace | default('headlamp') }}
+    -o jsonpath="{.data.token}"
+  register: headlamp_raw_token
+  until: headlamp_raw_token.rc == 0 and headlamp_raw_token.stdout != ""
+  retries: 5
+  delay: 3
+  failed_when: false
+  changed_when: false
+
+- name: Fallback to kubectl create token if secret token was not found
+  ansible.builtin.command: >
+    kubectl create token {{ headlamp_service_account | default('headlamp-admin') }}
+    --namespace {{ headlamp_namespace | default('headlamp') }}
+    --duration=87600h
+  register: headlamp_generated_token
+  when: headlamp_raw_token.stdout is not defined or headlamp_raw_token.stdout == ""
+  changed_when: false
+
+- name: Set Headlamp Token Fact
+  ansible.builtin.set_fact:
+    headlamp_token: "{{ (headlamp_raw_token.stdout | b64decode) if (headlamp_raw_token.stdout is defined and headlamp_raw_token.stdout != '') else headlamp_generated_token.stdout }}"
+
+- name: Ensure local artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: '0755'
+  delegate_to: localhost
+  become: false
+
+- name: Save Headlamp Token to Artifacts Directory
+  ansible.builtin.copy:
+    content: "{{ headlamp_token }}\n"
+    dest: "{{ artifacts_dir }}/headlamp-token.txt"
+    mode: '0600'
+  delegate_to: localhost
+  become: false
+
+- name: Display Headlamp Access Info
+  ansible.builtin.debug:
+    msg:
+      - "=========================================================="
+      - " Headlamp Dashboard Deployed Successfully!"
+      - " URL   : https://{{ headlamp_domain }}"
+      - " Token saved securely to : {{ artifacts_dir }}/headlamp-token.txt"
+      - "=========================================================="

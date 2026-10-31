@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Helper Script: Provision 4 Ubuntu 22.04 VMs on GCP for Kubernetes Cluster (Lab 2)
+# Architecture: 1 Master Node (Control Plane), 3 Worker Nodes
+# ==============================================================================
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_DIR="$(dirname "$SCRIPT_DIR")"
+
+PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
+ZONE="${GCP_ZONE:-asia-southeast1-a}"
+IMAGE_FAMILY="ubuntu-2204-lts"
+IMAGE_PROJECT="ubuntu-os-cloud"
+DISK_SIZE="50GB"
+MACHINE_TYPE="e2-standard-2" # 2 vCPUs, 8 GB RAM per node
+SSH_PUB_KEY="$HOME/.ssh/id_rsa.pub"
+TARGET_USER="dara"
+
+echo "=========================================================="
+echo " GCP Kubernetes Cluster Provisioner (Lab 2)"
+echo " Project: $PROJECT_ID | Zone: $ZONE"
+echo " Master: 1 | Workers: 3 | Machine: $MACHINE_TYPE"
+echo "=========================================================="
+
+if [ -z "$PROJECT_ID" ]; then
+  echo "Error: No GCP Project is set. Run: gcloud config set project YOUR_PROJECT_ID"
+  exit 1
+fi
+
+if [ ! -f "$SSH_PUB_KEY" ]; then
+  echo "Generating SSH key pair..."
+  ssh-keygen -t rsa -b 4096 -f "$HOME/.ssh/id_rsa" -N "" -C "dara-ansible-controller"
+fi
+
+# 1. Create Firewall Rules
+echo "[1/4] Ensuring GCP Firewall rules exist..."
+
+# Rule for external HTTP/HTTPS, SSH, and Kube API
+gcloud compute firewall-rules describe allow-k8s-traffic --quiet >/dev/null 2>&1 || \
+gcloud compute firewall-rules create allow-k8s-traffic \
+  --direction=INGRESS \
+  --priority=1000 \
+  --network=default \
+  --action=ALLOW \
+  --rules=tcp:22,tcp:80,tcp:443,tcp:6443,tcp:8080,tcp:2379-2380,tcp:10250-10255,tcp:30000-32767 \
+  --source-ranges=0.0.0.0/0 \
+  --target-tags=k8s-node \
+  --description="Allow SSH (22), HTTP (80), HTTPS (443), K8s API (6443), Traefik dashboard (8080), NodePort"
+
+# Rule for internal cluster networking across all nodes
+gcloud compute firewall-rules describe allow-k8s-internal --quiet >/dev/null 2>&1 || \
+gcloud compute firewall-rules create allow-k8s-internal \
+  --direction=INGRESS \
+  --priority=900 \
+  --network=default \
+  --action=ALLOW \
+  --rules=all \
+  --source-ranges=10.128.0.0/9,10.233.0.0/16 \
+  --target-tags=k8s-node \
+  --description="Allow full internal communication between cluster nodes and pod subnets"
+
+# 2. Provision Virtual Machines
+VMS=("k8s-master-01" "k8s-worker-01" "k8s-worker-02" "k8s-worker-03")
+
+for VM in "${VMS[@]}"; do
+  echo "[2/4] Checking/Creating VM: $VM..."
+  if gcloud compute instances describe "$VM" --zone="$ZONE" --quiet >/dev/null 2>&1; then
+    echo "  VM $VM already exists. Skipping creation."
+  else
+    echo "  Launching $VM ($MACHINE_TYPE, Ubuntu 22.04)..."
+    gcloud compute instances create "$VM" \
+      --zone="$ZONE" \
+      --machine-type="$MACHINE_TYPE" \
+      --image-family="$IMAGE_FAMILY" \
+      --image-project="$IMAGE_PROJECT" \
+      --boot-disk-size="$DISK_SIZE" \
+      --boot-disk-type="pd-balanced" \
+      --tags=http-server,https-server,k8s-node \
+      --metadata="ssh-keys=${TARGET_USER}:$(cat "$SSH_PUB_KEY"),enable-oslogin=FALSE"
+  fi
+done
+
+# 3. Retrieve External and Internal IPs
+echo "[3/4] Fetching External & Internal IP addresses..."
+MASTER_EXT_IP=$(gcloud compute instances describe k8s-master-01 --zone="$ZONE" --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
+MASTER_INT_IP=$(gcloud compute instances describe k8s-master-01 --zone="$ZONE" --format='get(networkInterfaces[0].networkIP)')
+
+WORKER1_EXT_IP=$(gcloud compute instances describe k8s-worker-01 --zone="$ZONE" --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
+WORKER1_INT_IP=$(gcloud compute instances describe k8s-worker-01 --zone="$ZONE" --format='get(networkInterfaces[0].networkIP)')
+
+WORKER2_EXT_IP=$(gcloud compute instances describe k8s-worker-02 --zone="$ZONE" --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
+WORKER2_INT_IP=$(gcloud compute instances describe k8s-worker-02 --zone="$ZONE" --format='get(networkInterfaces[0].networkIP)')
+
+WORKER3_EXT_IP=$(gcloud compute instances describe k8s-worker-03 --zone="$ZONE" --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
+WORKER3_INT_IP=$(gcloud compute instances describe k8s-worker-03 --zone="$ZONE" --format='get(networkInterfaces[0].networkIP)')
+
+echo "  k8s-master-01 : Ext: $MASTER_EXT_IP  | Int: $MASTER_INT_IP"
+echo "  k8s-worker-01 : Ext: $WORKER1_EXT_IP | Int: $WORKER1_INT_IP"
+echo "  k8s-worker-02 : Ext: $WORKER2_EXT_IP | Int: $WORKER2_INT_IP"
+echo "  k8s-worker-03 : Ext: $WORKER3_EXT_IP | Int: $WORKER3_INT_IP"
+
+# 4. Generate Kubespray Inventory File
+INVENTORY_FILE="$BASE_DIR/inventory/mycluster/inventory.ini"
+echo "[4/4] Writing Kubespray inventory: $INVENTORY_FILE..."
+
+cat <<EOF > "$INVENTORY_FILE"
+# ==============================================================================
+# Kubespray Inventory for GCP Kubernetes Cluster (Lab 2)
+# Automatically generated by provision-gcp-vms.sh on $(date -u)
+# ==============================================================================
+
+[all:vars]
+ansible_user=${TARGET_USER}
+ansible_ssh_private_key_file=~/.ssh/id_rsa
+ansible_python_interpreter=/usr/bin/python3
+ansible_ssh_extra_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+[kube_control_plane]
+k8s-master-01 ansible_host=${MASTER_EXT_IP} ip=${MASTER_INT_IP}
+
+[etcd]
+k8s-master-01 ansible_host=${MASTER_EXT_IP} ip=${MASTER_INT_IP}
+
+[kube_node]
+k8s-worker-01 ansible_host=${WORKER1_EXT_IP} ip=${WORKER1_INT_IP}
+k8s-worker-02 ansible_host=${WORKER2_EXT_IP} ip=${WORKER2_INT_IP}
+k8s-worker-03 ansible_host=${WORKER3_EXT_IP} ip=${WORKER3_INT_IP}
+
+[k8s_cluster:children]
+kube_control_plane
+kube_node
+EOF
+
+# Update master IP in k8s-cluster.yml for SANs
+K8S_VARS="$BASE_DIR/inventory/mycluster/group_vars/k8s_cluster/k8s-cluster.yml"
+if [ -f "$K8S_VARS" ]; then
+  sed -i "s/- \"master.dara.lifestyle\"/- \"master.dara.lifestyle\"\n  - \"${MASTER_EXT_IP}\"/g" "$K8S_VARS" 2>/dev/null || true
+fi
+
+echo "=========================================================="
+echo " GCP Provisioning Complete!"
+echo " Next Steps:"
+echo " 1. Test SSH connectivity:"
+echo "    ansible -i $INVENTORY_FILE all -m ping"
+echo " 2. Point your DNS records for dara.lifestyle to Worker IPs:"
+echo "    headlamp.dara.lifestyle -> $WORKER1_EXT_IP (or any worker)"
+echo "    argocd.dara.lifestyle   -> $WORKER1_EXT_IP (or any worker)"
+echo "    react.dara.lifestyle    -> $WORKER1_EXT_IP (or any worker)"
+echo " 3. Run deployment:"
+echo "    ./scripts/deploy-all.sh"
+echo "=========================================================="

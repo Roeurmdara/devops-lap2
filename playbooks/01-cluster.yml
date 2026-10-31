@@ -1,0 +1,84 @@
+---
+# ==============================================================================
+# Playbook: Node Pre-Configuration and Cluster Validation (01-cluster.yml)
+# ==============================================================================
+
+- name: Prepare Ubuntu 22.04 Nodes for Kubernetes & Kubespray
+  hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Disable swap immediately
+      ansible.builtin.command: swapoff -a
+      changed_when: false
+
+    - name: Ensure swap is removed from /etc/fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^([^#].*\sswap\s+.*)$'
+        replace: '# \1'
+
+    - name: Ensure required kernel modules are loaded
+      ansible.builtin.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: Persist kernel modules across reboot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
+        mode: '0644'
+
+    - name: Configure sysctl params for Kubernetes networking
+      ansible.posix.sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: true
+      loop:
+        - { name: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+        - { name: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+        - { name: 'net.ipv4.ip_forward', value: '1' }
+
+    - name: Ensure standard dependencies are installed
+      ansible.builtin.apt:
+        name:
+          - curl
+          - gnupg2
+          - software-properties-common
+          - apt-transport-https
+          - ca-certificates
+          - python3-pip
+          - python3-bcrypt
+        state: present
+        update_cache: true
+
+- name: Retrieve Kubeconfig to Local Machine
+  hosts: kube_control_plane[0]
+  become: true
+  tasks:
+    - name: Check if admin.conf exists on control plane
+      ansible.builtin.stat:
+        path: /etc/kubernetes/admin.conf
+      register: k8s_admin_conf
+
+    - name: Fetch admin.conf to local workstation artifacts
+      ansible.builtin.fetch:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ artifacts_dir | default(playbook_dir ~ '/../artifacts') }}/admin.conf"
+        flat: true
+      when: k8s_admin_conf.stat.exists
+
+    - name: Update server IP in local admin.conf to public IP of master
+      delegate_to: localhost
+      become: false
+      ansible.builtin.replace:
+        path: "{{ artifacts_dir | default(playbook_dir ~ '/../artifacts') }}/admin.conf"
+        regexp: 'https://127.0.0.1:6443'
+        replace: "https://{{ ansible_host }}:6443"
+      when: k8s_admin_conf.stat.exists

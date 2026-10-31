@@ -1,0 +1,14 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ cluster_issuer_name | default('letsencrypt-prod') }}
+spec:
+  acme:
+    email: {{ cert_manager_email | default('admin@dara.lifestyle') }}
+    server: {{ acme_server | default('https://acme-v02.api.letsencrypt.org/directory') }}
+    privateKeySecretRef:
+      name: {{ cluster_issuer_name | default('letsencrypt-prod') }}
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik

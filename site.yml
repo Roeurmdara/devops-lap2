@@ -1,0 +1,16 @@
+---
+# ==============================================================================
+# Complete Kubernetes Cluster & Add-ons Orchestration (site.yml)
+# ==============================================================================
+
+# Phase 1: Prepare Nodes and Validate Prerequisites
+- import_playbook: playbooks/01-cluster.yml
+
+# Phase 2: Deploy Kubernetes Cluster via Kubespray
+- import_playbook: kubespray/cluster.yml
+
+# Phase 3: Fetch Kubeconfig to Local Management Node
+- import_playbook: playbooks/03-fetch-kubeconfig.yml
+
+# Phase 4: Deploy Cluster Add-ons, Ingress, Headlamp, ArgoCD, and React Pipeline
+- import_playbook: playbooks/02-addons.yml

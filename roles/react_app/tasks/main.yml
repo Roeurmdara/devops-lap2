@@ -1,0 +1,71 @@
+---
+# ==============================================================================
+# Role Tasks: Deploy React.js Application & ArgoCD GitOps Application
+# ==============================================================================
+
+- name: Create production namespace for React application
+  ansible.builtin.command: kubectl create namespace {{ react_namespace | default('production') }}
+  register: create_ns_react
+  failed_when: create_ns_react.rc != 0 and "already exists" not in create_ns_react.stderr
+  changed_when: create_ns_react.rc == 0
+
+- name: Render React Deployment manifest
+  ansible.builtin.template:
+    src: deployment.yaml.j2
+    dest: /tmp/react-deployment.yaml
+    mode: '0644'
+
+- name: Apply React Deployment
+  ansible.builtin.command: kubectl apply -f /tmp/react-deployment.yaml
+  register: apply_react_dpl
+  changed_when: "'configured' in apply_react_dpl.stdout or 'created' in apply_react_dpl.stdout"
+
+- name: Render React Service manifest
+  ansible.builtin.template:
+    src: service.yaml.j2
+    dest: /tmp/react-service.yaml
+    mode: '0644'
+
+- name: Apply React Service
+  ansible.builtin.command: kubectl apply -f /tmp/react-service.yaml
+  register: apply_react_svc
+  changed_when: "'configured' in apply_react_svc.stdout or 'created' in apply_react_svc.stdout"
+
+- name: Render React Ingress manifest
+  ansible.builtin.template:
+    src: ingress.yaml.j2
+    dest: /tmp/react-ingress.yaml
+    mode: '0644'
+
+- name: Apply React Ingress
+  ansible.builtin.command: kubectl apply -f /tmp/react-ingress.yaml
+  register: apply_react_ing
+  changed_when: "'configured' in apply_react_ing.stdout or 'created' in apply_react_ing.stdout"
+
+- name: Wait for React application deployment rollout
+  ansible.builtin.command: >
+    kubectl rollout status deployment react-app
+    -n {{ react_namespace | default('production') }}
+    --timeout=120s
+  changed_when: false
+
+- name: Render ArgoCD Application manifest
+  ansible.builtin.template:
+    src: argocd-application.yaml.j2
+    dest: /tmp/argocd-react-app.yaml
+    mode: '0644'
+
+- name: Apply ArgoCD GitOps Application
+  ansible.builtin.command: kubectl apply -f /tmp/argocd-react-app.yaml
+  register: apply_argocd_app
+  changed_when: "'configured' in apply_argocd_app.stdout or 'created' in apply_argocd_app.stdout"
+
+- name: Display React Application Status
+  ansible.builtin.debug:
+    msg:
+      - "=========================================================="
+      - " React.js GitOps Pipeline Deployed Successfully!"
+      - " Host : https://{{ react_domain }}"
+      - " ArgoCD Application: react-app-gitops"
+      - " Destination Namespace: {{ react_namespace }}"
+      - "=========================================================="

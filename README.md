@@ -87,6 +87,9 @@ aws sso login --profile lab2
 export AWS_PROFILE="lab2"
 export AWS_DEFAULT_REGION="ap-southeast-2" # or us-east-1, etc.
 export AWS_ADMIN_CIDR="YOUR_PUBLIC_IP/32"
+read -r -s -p "Argo CD admin password (20+ characters): " ARGOCD_ADMIN_PASSWORD
+printf '\n'
+export ARGOCD_ADMIN_PASSWORD
 ```
 
 `AWS_ADMIN_CIDR` is required. Use the public IP/CIDR allowed to administer SSH and the Kubernetes API; do not use `0.0.0.0/0`.

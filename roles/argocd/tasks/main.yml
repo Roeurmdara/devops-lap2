@@ -1,0 +1,136 @@
+---
+# ==============================================================================
+# Role Tasks: Deploy ArgoCD with Traefik Ingress & Custom Admin Password
+# ==============================================================================
+
+- name: Create ArgoCD namespace
+  ansible.builtin.command: kubectl create namespace {{ argocd_namespace | default('argocd') }}
+  register: create_ns_argocd
+  failed_when: create_ns_argocd.rc != 0 and "already exists" not in create_ns_argocd.stderr
+  changed_when: create_ns_argocd.rc == 0
+
+- name: Apply official ArgoCD installation manifests
+  ansible.builtin.command: >
+    kubectl apply --server-side --force-conflicts
+    -n {{ argocd_namespace | default('argocd') }}
+    -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+  register: apply_argocd_manifests
+  changed_when: "'created' in apply_argocd_manifests.stdout or 'configured' in apply_argocd_manifests.stdout"
+
+- name: Patch ArgoCD to disable internal TLS (server.insecure=true for Traefik proxy)
+  ansible.builtin.command: >
+    kubectl patch configmap argocd-cmd-params-cm
+    -n {{ argocd_namespace | default('argocd') }}
+    --type merge
+    -p '{"data":{"server.insecure":"true"}}'
+  register: patch_argocd_cm
+  changed_when: "'patched' in patch_argocd_cm.stdout"
+
+- name: Render ArgoCD Traefik ServersTransport
+  ansible.builtin.template:
+    src: argocd-server-transport.yaml.j2
+    dest: /tmp/argocd-server-transport.yaml
+    mode: '0644'
+
+- name: Apply ArgoCD Traefik ServersTransport
+  ansible.builtin.command: kubectl apply -f /tmp/argocd-server-transport.yaml
+  register: apply_argocd_transport
+  changed_when: "'created' in apply_argocd_transport.stdout or 'configured' in apply_argocd_transport.stdout"
+
+- name: Render ArgoCD IngressRoute and Certificate
+  ansible.builtin.template:
+    src: argocd-ingress-route.yaml.j2
+    dest: /tmp/argocd-ingress-route.yaml
+    mode: '0644'
+
+- name: Apply ArgoCD IngressRoute and Certificate
+  ansible.builtin.command: kubectl apply -f /tmp/argocd-ingress-route.yaml
+  register: apply_argocd_ingress
+  changed_when: "'created' in apply_argocd_ingress.stdout or 'configured' in apply_argocd_ingress.stdout"
+
+- name: Wait for ArgoCD server deployment to exist
+  ansible.builtin.command: >
+    kubectl wait --namespace {{ argocd_namespace | default('argocd') }}
+    --for=condition=available deployment/argocd-server
+    --timeout=300s
+  changed_when: false
+
+# ------------------------------------------------------------------------------
+# Automated Admin Password Reset
+# ------------------------------------------------------------------------------
+- name: Require a strong ArgoCD admin password
+  ansible.builtin.assert:
+    that:
+      - argocd_admin_password | length >= 20
+    fail_msg: Set ARGOCD_ADMIN_PASSWORD to a password with at least 20 characters.
+  no_log: true
+
+- name: Generate bcrypt hash for custom ArgoCD admin password
+  ansible.builtin.shell: >
+    python3 -c "import os, bcrypt; print(bcrypt.hashpw(os.environ['ARGOCD_PW'].encode('utf-8'), bcrypt.gensalt(rounds=10, prefix=b'2a')).decode('utf-8'))"
+  environment:
+    ARGOCD_PW: "{{ argocd_admin_password }}"
+  register: bcrypt_output
+  changed_when: false
+
+- name: Get current UTC timestamp for password modification time
+  ansible.builtin.command: date -u +"%Y-%m-%dT%H:%M:%SZ"
+  register: current_mtime
+  changed_when: false
+
+- name: Patch argocd-secret with custom bcrypt admin password
+  ansible.builtin.shell: >
+    kubectl -n {{ argocd_namespace | default('argocd') }} patch secret argocd-secret
+    -p '{"stringData": {
+      "admin.password": "{{ bcrypt_output.stdout }}",
+      "admin.passwordMtime": "{{ current_mtime.stdout }}"
+    }}'
+  register: patch_secret_result
+  changed_when: "'patched' in patch_secret_result.stdout"
+
+- name: Delete initial admin secret if present
+  ansible.builtin.command: >
+    kubectl -n {{ argocd_namespace | default('argocd') }} delete secret argocd-initial-admin-secret
+  register: del_init_secret
+  failed_when: false
+  changed_when: del_init_secret.rc == 0
+
+- name: Restart argocd-server to apply new configuration and secret
+  ansible.builtin.command: >
+    kubectl rollout restart deployment argocd-server -n {{ argocd_namespace | default('argocd') }}
+  changed_when: true
+
+- name: Wait for argocd-server to complete rollout
+  ansible.builtin.command: >
+    kubectl rollout status deployment argocd-server -n {{ argocd_namespace | default('argocd') }} --timeout=120s
+  changed_when: false
+
+- name: Ensure local artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: '0755'
+  delegate_to: localhost
+  become: false
+
+- name: Save ArgoCD Credentials to Artifacts Directory
+  ansible.builtin.copy:
+    content: |
+      URL: https://{{ argocd_domain }}
+      Username: admin
+      Password: {{ argocd_admin_password }}
+      Password Hash: {{ bcrypt_output.stdout }}
+    dest: "{{ artifacts_dir }}/argocd-credentials.txt"
+    mode: '0600'
+  delegate_to: localhost
+  become: false
+
+- name: Display ArgoCD Access Information
+  ansible.builtin.debug:
+    msg:
+      - "=========================================================="
+      - " ArgoCD Deployed Successfully!"
+      - " URL      : https://{{ argocd_domain }}"
+      - " Username : admin"
+      - " Credentials saved securely to: {{ artifacts_dir }}/argocd-credentials.txt"
+      - "=========================================================="

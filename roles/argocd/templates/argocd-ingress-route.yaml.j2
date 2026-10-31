@@ -1,0 +1,30 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: argocd-server
+  namespace: {{ argocd_namespace | default('argocd') }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`{{ argocd_domain | default('argocd.dara.lifestyle') }}`)
+      kind: Rule
+      services:
+        - name: argocd-server
+          port: 80
+          serversTransport: argocd-transport
+  tls:
+    secretName: argocd-tls-cert
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: argocd-tls-cert
+  namespace: {{ argocd_namespace | default('argocd') }}
+spec:
+  secretName: argocd-tls-cert
+  issuerRef:
+    name: {{ cluster_issuer_name | default('letsencrypt-prod') }}
+    kind: ClusterIssuer
+  dnsNames:
+    - {{ argocd_domain | default('argocd.dara.lifestyle') }}

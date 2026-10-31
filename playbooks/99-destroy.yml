@@ -1,0 +1,68 @@
+---
+# ==============================================================================
+# Playbook: Teardown & Purge All Add-ons and Cluster Resources (99-destroy.yml)
+# ==============================================================================
+
+- name: Teardown Add-ons and Workloads from Kubernetes Cluster
+  hosts: kube_control_plane[0]
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Remove ArgoCD application if exists
+      ansible.builtin.command: kubectl delete application react-app-gitops -n argocd --ignore-not-found --timeout=30s
+      failed_when: false
+      changed_when: true
+
+    - name: Remove React.js production namespace and resources
+      ansible.builtin.command: kubectl delete namespace {{ react_namespace | default('production') }} --ignore-not-found --timeout=60s
+      failed_when: false
+      changed_when: true
+
+    - name: Uninstall Headlamp Helm release
+      ansible.builtin.command: helm uninstall headlamp -n {{ headlamp_namespace | default('headlamp') }}
+      failed_when: false
+      changed_when: true
+
+    - name: Delete Headlamp namespace
+      ansible.builtin.command: kubectl delete namespace {{ headlamp_namespace | default('headlamp') }} --ignore-not-found --timeout=60s
+      failed_when: false
+      changed_when: true
+
+    - name: Delete ArgoCD resources and namespace
+      ansible.builtin.command: kubectl delete namespace {{ argocd_namespace | default('argocd') }} --ignore-not-found --timeout=60s
+      failed_when: false
+      changed_when: true
+
+    - name: Uninstall Traefik Ingress Controller Helm release
+      ansible.builtin.command: helm uninstall traefik -n traefik
+      failed_when: false
+      changed_when: true
+
+    - name: Delete Traefik namespace
+      ansible.builtin.command: kubectl delete namespace traefik --ignore-not-found --timeout=60s
+      failed_when: false
+      changed_when: true
+
+    - name: Uninstall Cert-Manager Helm release
+      ansible.builtin.command: helm uninstall cert-manager -n cert-manager
+      failed_when: false
+      changed_when: true
+
+    - name: Delete Cert-Manager namespace
+      ansible.builtin.command: kubectl delete namespace cert-manager --ignore-not-found --timeout=60s
+      failed_when: false
+      changed_when: true
+
+- name: Purge local artifact files
+  hosts: localhost
+  connection: local
+  become: false
+  tasks:
+    - name: Remove generated local tokens and credentials
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ artifacts_dir | default(playbook_dir ~ '/../artifacts') }}/headlamp-token.txt"
+        - "{{ artifacts_dir | default(playbook_dir ~ '/../artifacts') }}/argocd-credentials.txt"
+        - "{{ artifacts_dir | default(playbook_dir ~ '/../artifacts') }}/admin.conf"

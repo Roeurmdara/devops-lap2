@@ -1,0 +1,36 @@
+deployment:
+  replicas: 2
+
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+    maxSurge: 0
+
+# ClusterIP service because external traffic binds directly to VM hostPorts (80 & 443)
+service:
+  spec:
+    type: ClusterIP
+
+ports:
+  web:
+    port: 8000
+    hostPort: 80
+    redirectTo:
+      port: websecure
+  websecure:
+    port: 8443
+    hostPort: 443
+
+providers:
+  kubernetesCRD:
+    enabled: true
+  kubernetesIngress:
+    enabled: true
+
+api:
+  dashboard: true
+
+additionalArguments:
+  - "--api.insecure=true"
+  - "--api.dashboard=true"

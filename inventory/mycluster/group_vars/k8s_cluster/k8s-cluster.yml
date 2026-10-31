@@ -1,0 +1,56 @@
+---
+# ==============================================================================
+# Kubespray Cluster Configuration (k8s-cluster.yml)
+# ==============================================================================
+
+# Kubernetes Directories and Credentials
+kube_config_dir: /etc/kubernetes
+kube_script_dir: "{{ bin_dir }}/kubernetes-scripts"
+kube_manifest_dir: "{{ kube_config_dir }}/manifests"
+kube_cert_dir: "{{ kube_config_dir }}/ssl"
+kube_token_dir: "{{ kube_config_dir }}/tokens"
+credentials_dir: "{{ inventory_dir }}/credentials"
+kubeadm_certificate_key: "{{ lookup('password', credentials_dir + '/kubeadm_certificate_key.creds length=64 chars=hexdigits') | lower }}"
+
+# Kubernetes Version
+kube_version: v1.29.5
+
+# Cluster identification
+cluster_name: cluster.local
+
+# Container runtime engine (Containerd is standard for modern k8s)
+container_manager: containerd
+
+# CNI Network plugin
+kube_network_plugin: calico
+kube_network_plugin_multus: false
+
+# Kubernetes network subnets
+kube_service_addresses: 10.233.0.0/18
+kube_pods_subnet: 10.233.64.0/18
+kube_network_node_prefix: 24
+
+# DNS Configuration
+dns_mode: coredns
+enable_nodelocaldns: true
+nodelocaldns_ip: 169.254.25.10
+
+# Automatically fetch admin kubeconfig to local Ansible host
+kubeconfig_localhost: true
+kubeconfig_localhost_ansible_host: true
+
+# Enable automatic certificate renewal
+auto_renew_certificates: true
+
+# External access & certificate SANs
+# Any public IPs or domains that access the kube-apiserver directly
+supplementary_addresses_in_ssl_keys:
+  - "127.0.0.1"
+  - "master.dara.lifestyle"
+  - "3.107.116.131"
+  - "3.107.116.131"
+  - "3.107.116.131"
+
+# System settings
+resolvconf_mode: host_resolvconf
+system_reserved: false

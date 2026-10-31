@@ -1,0 +1,52 @@
+---
+# ==============================================================================
+# Role Tasks: Deploy Traefik Ingress Controller
+# ==============================================================================
+
+- name: Create Traefik namespace
+  ansible.builtin.command: kubectl create namespace traefik
+  register: create_ns_traefik
+  failed_when: create_ns_traefik.rc != 0 and "already exists" not in create_ns_traefik.stderr
+  changed_when: create_ns_traefik.rc == 0
+
+- name: Render Traefik Helm values file
+  ansible.builtin.template:
+    src: traefik-values.yaml.j2
+    dest: /tmp/traefik-values.yaml
+    mode: '0644'
+
+- name: Add Traefik Helm repository
+  ansible.builtin.command: helm repo add traefik https://traefik.github.io/charts
+  changed_when: false
+
+- name: Update Helm repositories
+  ansible.builtin.command: helm repo update
+  changed_when: false
+
+- name: Deploy Traefik Ingress Controller via Helm
+  ansible.builtin.command: >
+    helm upgrade --install traefik traefik/traefik
+    --version 28.0.0
+    --namespace traefik
+    --values /tmp/traefik-values.yaml
+    --wait
+    --timeout 5m
+  register: helm_traefik_result
+  changed_when: "'Release \"traefik\" does not exist' in helm_traefik_result.stdout or 'STATUS: deployed' in helm_traefik_result.stdout"
+
+- name: Wait for Traefik pods to become ready
+  ansible.builtin.command: >
+    kubectl wait --namespace traefik
+    --for=condition=ready pod
+    --selector=app.kubernetes.io/name=traefik
+    --timeout=120s
+  changed_when: false
+
+- name: Verify Traefik deployment status
+  ansible.builtin.command: kubectl get pods -n traefik -o wide
+  register: traefik_pods
+  changed_when: false
+
+- name: Display Traefik Pod Status
+  ansible.builtin.debug:
+    var: traefik_pods.stdout_lines
